@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Code Card Generator</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 0;
+    }
+
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 2rem;
+      color: #222;
+    }
+
+    main {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2rem;
+      align-items: flex-start;
+    }
+
+    form {
+      display: grid;
+      grid-template-columns: 9rem 19rem;
+      gap: 0.5rem 1rem;
+      align-items: center;
+    }
+
+    form .full {
+      grid-column: 1 / -1;
+    }
+
+    fieldset {
+      border: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .encoded-only[hidden],
+    .random-only[hidden] {
+      display: none;
+    }
+
+    .salt-row {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .salt-row input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .error {
+      color: #b00020;
+      min-height: 1.5em;
+    }
+
+    .hint {
+      color: #666;
+      font-size: 0.9em;
+      max-width: 34rem;
+    }
+
+    #cards:empty {
+      display: none;
+    }
+
+    /* Cards are laid out on an A4 landscape page, centered inside a 10mm margin. */
+    #cards {
+      display: grid;
+      box-sizing: border-box;
+      width: 297mm;
+      height: 210mm;
+      padding: 10mm;
+      justify-content: center;
+      align-content: center;
+      background: white;
+      box-shadow: 0 0 0.5rem rgba(0, 0, 0, 0.3);
+    }
+
+    .card {
+      width: 56mm;
+      height: 85.6mm;
+      background: white;
+    }
+
+    .card svg {
+      display: block;
+      width: 56mm;
+      height: 85.6mm;
+    }
+
+    .card text {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 12px;
+      white-space: pre;
+      fill: black;
+    }
+
+    @media print {
+      body {
+        margin: 0;
+      }
+
+      .no-print {
+        display: none !important;
+      }
+
+      #cards {
+        box-shadow: none !important;
+      }
+
+      /* Slightly shorter than the page so rounding never spills onto a second page. */
+      #cards {
+        height: 209mm;
+        overflow: hidden;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="no-print">
+      <h1>Code Card Generator</h1>
+      <p class="hint">
+        Choose a secret keyword and use the numbers on the card for its letters as your PIN.
+        An encoded card maps an existing PIN to your keyword. Nothing you enter leaves this page.
+      </p>
+      <form id="form" autocomplete="off" novalidate>
+        <label for="title">Title</label>
+        <input id="title" name="title" type="text">
+
+        <fieldset class="full">
+          <label><input type="radio" name="mode" value="random" checked> Random cards</label>
+          <label><input type="radio" name="mode" value="encoded"> Encode an existing PIN</label>
+        </fieldset>
+
+        <label class="random-only" for="count">Number of cards</label>
+        <input class="random-only" id="count" name="count" type="number" min="1" value="1">
+
+        <label class="encoded-only" for="salt">Salt</label>
+        <div class="encoded-only salt-row">
+          <input id="salt" name="salt" type="text" spellcheck="false">
+          <button type="button" id="random-salt" title="Generate a secure random salt">Random</button>
+        </div>
+
+        <label class="encoded-only" for="keyword">Keyword</label>
+        <input class="encoded-only" id="keyword" type="password" autocomplete="new-password">
+
+        <label class="encoded-only" for="keyword-confirm">Repeat keyword</label>
+        <input class="encoded-only" id="keyword-confirm" type="password" autocomplete="new-password">
+
+        <label class="encoded-only" for="code">Code</label>
+        <input class="encoded-only" id="code" type="password" inputmode="numeric" autocomplete="new-password">
+
+        <label class="encoded-only" for="code-confirm">Repeat code</label>
+        <input class="encoded-only" id="code-confirm" type="password" inputmode="numeric" autocomplete="new-password">
+
+        <div class="full">
+          <button type="submit">Generate</button>
+          <button type="button" id="print" disabled>Print</button>
+        </div>
+        <div class="full error" id="error" role="alert"></div>
+      </form>
+      <p class="hint encoded-only">
+        Encoded cards are deterministic: the same salt, keyword and code always produce the same
+        card, identical to the <code>code-card encoded</code> command. If you use a random salt,
+        keep a copy of it: you need it to generate the same card again.
+      </p>
+      <p class="hint">
+        Print at 100% scale ("actual size") with no margins, headers or footers so cards
+        are credit card sized. Cards print on an A4 landscape sheet, up to
+        <span id="max-cards"></span> at a time.
+      </p>
+    </section>
+    <div id="cards"></div>
+  </main>
+
+  <script src="codecard.js"></script>
+  <script>
+    "use strict";
+
+    // Card geometry in PDF points with the origin at the bottom left, matching pkg/codecard/render.go.
+    const MM = 72 / 25.4;
+    const PAGE = { x: 56.0 * MM, y: 85.6 * MM };
+    const BORDER_MARGIN = { x: 1 * MM, y: 1 * MM };
+    // Padding is intentionally lop-sided since sleeves cut the bottom off by more.
+    const PADDING_LB = { x: 5 * MM, y: 13 * MM };
+    const PADDING_RT = { x: 5 * MM, y: 1 * MM };
+    const COLUMNS = 2;
+    const FONT_SIZE = 12;
+    // Courier ascent and descent from the font's AFM metrics, per 1000 units.
+    const FONT_HEIGHT = (629 - -157) / 1000 * FONT_SIZE;
+    // Accounts for stroke border widths when centering text in a row.
+    const STROKE_ALLOWANCE = 2;
+
+    // A4 landscape sheet for the cards. Cards are laid out inside a 10mm margin from the
+    // edges of the page, which printers can reliably print within.
+    const SHEET_MM = { x: 297, y: 210 };
+    const CARD_MM = { x: 56.0, y: 85.6 };
+    const PRINT_MARGIN_MM = 10;
+    const SHEET_COLUMNS = Math.floor((SHEET_MM.x - 2 * PRINT_MARGIN_MM) / CARD_MM.x);
+    const SHEET_ROWS = Math.floor((SHEET_MM.y - 2 * PRINT_MARGIN_MM) / CARD_MM.y);
+    const MAX_CARDS = SHEET_COLUMNS * SHEET_ROWS;
+
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    // renderCard returns an SVG element drawing the table on a credit card sized card.
+    function renderCard(table, title) {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("viewBox", `0 0 ${PAGE.x} ${PAGE.y}`);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", "Code card");
+
+      const add = (name, attrs, text) => {
+        const el = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+          el.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+          el.textContent = text;
+        }
+        svg.appendChild(el);
+      };
+      // Convert from a bottom-left to the SVG's top-left origin.
+      const flipY = (y) => PAGE.y - y;
+      const stroke = { fill: "none", stroke: "black", "stroke-width": 1 };
+
+      // Draw the cut border
+      const cutSize = { x: PAGE.x - 2 * BORDER_MARGIN.x, y: PAGE.y - 2 * BORDER_MARGIN.y };
+      add("rect", { x: BORDER_MARGIN.x, y: flipY(BORDER_MARGIN.y + cutSize.y), width: cutSize.x, height: cutSize.y, ...stroke });
+
+      const usableOrigin = { x: BORDER_MARGIN.x + PADDING_LB.x, y: BORDER_MARGIN.y + PADDING_LB.y };
+      const usableSize = {
+        x: PAGE.x - PADDING_LB.x - (2 * BORDER_MARGIN.x + PADDING_RT.x),
+        y: PAGE.y - PADDING_LB.y - (2 * BORDER_MARGIN.y + PADDING_RT.y),
+      };
+      const usableTop = usableOrigin.y + usableSize.y;
+
+      const rows = CodeCard.tableRows(table);
+      const totalRows = Math.ceil(rows.length / COLUMNS) + 1; // Add one more row for the title
+      const columnWidth = usableSize.x / COLUMNS;
+      const rowHeight = usableSize.y / totalRows;
+      const rowCenterOffset = rowHeight - (rowHeight - FONT_HEIGHT - STROKE_ALLOWANCE);
+
+      if (title) {
+        add("text", { x: usableOrigin.x + usableSize.x / 2, y: flipY(usableTop - rowCenterOffset), "text-anchor": "middle" }, title);
+      }
+
+      const lineY = flipY(usableTop - rowHeight);
+      add("line", { x1: usableOrigin.x, y1: lineY, x2: usableOrigin.x + usableSize.x, y2: lineY, ...stroke });
+
+      rows.forEach((text, idx) => {
+        const rowIdx = Math.floor(idx / COLUMNS) + 1;
+        const colIdx = idx % COLUMNS;
+        add("text", {
+          x: usableOrigin.x + usableSize.x / (2 * COLUMNS) + columnWidth * colIdx,
+          y: flipY(usableTop - rowIdx * rowHeight - rowCenterOffset),
+          "text-anchor": "middle",
+        }, text);
+      });
+
+      return svg;
+    }
+
+    const form = document.getElementById("form");
+    const cards = document.getElementById("cards");
+    const errorBox = document.getElementById("error");
+    const printButton = document.getElementById("print");
+    const field = (id) => document.getElementById(id);
+
+    const mode = () => form.elements.mode.value;
+
+    function updateMode() {
+      const encoded = mode() === "encoded";
+      document.querySelectorAll(".encoded-only").forEach((el) => {
+        el.hidden = !encoded;
+      });
+      document.querySelectorAll(".random-only").forEach((el) => {
+        el.hidden = encoded;
+      });
+    }
+
+    function clearCard() {
+      cards.replaceChildren();
+      printButton.disabled = true;
+    }
+
+    // showCards displays the tables centered on an A4 sheet.
+    function showCards(tables, title) {
+      cards.style.gridTemplateColumns = `repeat(${Math.min(tables.length, SHEET_COLUMNS)}, ${CARD_MM.x}mm)`;
+      for (const table of tables) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "card";
+        wrapper.appendChild(renderCard(table, title));
+        cards.appendChild(wrapper);
+      }
+      printButton.disabled = false;
+    }
+
+    // Optional URL parameters. The keyword and code are deliberately not accepted, so they
+    // never end up in browser history or server logs.
+    const params = new URLSearchParams(window.location.search);
+    field("title").value = params.get("title") || "";
+    field("salt").value = params.get("encoded_salt") || CodeCard.DEFAULT_SALT;
+    const count = field("count");
+    count.max = MAX_CARDS;
+    field("max-cards").textContent = MAX_CARDS;
+    const countParam = parseInt(params.get("count"), 10);
+    if (countParam >= 1) {
+      count.value = Math.min(countParam, MAX_CARDS);
+    }
+    if (params.get("mode") === "encoded") {
+      form.elements.mode.value = "encoded";
+    }
+    updateMode();
+
+    form.addEventListener("change", (event) => {
+      if (event.target.name === "mode") {
+        updateMode();
+        clearCard();
+        errorBox.textContent = "";
+      }
+    });
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      errorBox.textContent = "";
+      clearCard();
+
+      try {
+        let tables;
+        if (mode() === "encoded") {
+          const keyword = field("keyword").value;
+          const code = field("code").value;
+          if (keyword !== field("keyword-confirm").value) {
+            throw new Error("The two entered keywords do not match.");
+          }
+          if (code !== field("code-confirm").value) {
+            throw new Error("The two entered codes do not match.");
+          }
+          if (keyword === "" || code === "") {
+            throw new Error("Enter both a keyword and a code.");
+          }
+          tables = [CodeCard.semiRandomTable(field("salt").value, code, keyword)];
+        } else {
+          const number = Number(count.value);
+          if (!Number.isInteger(number) || number < 1 || number > MAX_CARDS) {
+            throw new Error(`The number of cards must be between 1 and ${MAX_CARDS}.`);
+          }
+          tables = Array.from({ length: number }, () => CodeCard.randomTable());
+        }
+        showCards(tables, field("title").value);
+      } catch (err) {
+        errorBox.textContent = err.message;
+      }
+    });
+
+    document.getElementById("random-salt").addEventListener("click", () => {
+      field("salt").value = CodeCard.randomSalt();
+      clearCard();
+    });
+
+    printButton.addEventListener("click", () => window.print());
+  </script>
+</body>
+</html>
