@@ -16,7 +16,7 @@ require (
 	github.com/wrouesnel/go.logutil v0.0.0-20260831004131-2c91cc3e879a
 	github.com/wrouesnel/kongutil v0.0.0-20260819130755-29108a76e5f7
 	go.uber.org/zap v1.28.0
-	golang.org/x/mod v0.17.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/term v0.46.0
 )
 
