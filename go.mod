@@ -17,7 +17,7 @@ require (
 	github.com/wrouesnel/kongutil v0.0.0-20260819130755-29108a76e5f7
 	go.uber.org/zap v1.28.0
 	golang.org/x/mod v0.17.0
-	golang.org/x/term v0.46.0
+	golang.org/x/term v0.47.0
 )
 
 require (
@@ -37,6 +37,6 @@ require (
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	github.com/yuseferi/zax/v2 v2.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 )
