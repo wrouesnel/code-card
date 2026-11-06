@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	codeberg.org/go-pdf/fpdf v0.12.0
-	github.com/alecthomas/kong v1.16.1
+	github.com/alecthomas/kong v1.17.0
 	github.com/chigopher/pathlib v0.19.1
 	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b
 	github.com/integralist/go-findroot v0.0.0-20160518114804-ac90681525dc
